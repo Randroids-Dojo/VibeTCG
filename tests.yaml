@@ -1,0 +1,1370 @@
+# Theme-Agnostic Card Battler: Test Cases
+# ---------------------------------------------------------------
+# Schema: see tests-schema.md (companion). Quick reference:
+#   cases: list of case objects
+#   each case has: case_id, operation, setup, [action], checks
+#   each check has: { path, op, value } where op is one of:
+#     equals      | not_equals
+#     count       (length of array at path equals value)
+#     gte | lte   (numeric)
+#     contains    (array at path contains value as a member)
+#     truthy      (value is truthy; ignores `value` field)
+#     event_kind  (events array contains event with this kind; value is partial-match payload)
+#     event_order (events array contains these kinds in this order; value is list of kinds)
+#     throws      (operation throws an error matching value as substring; check has no `path`)
+# ---------------------------------------------------------------
+
+version: gdd-2026-05-23
+schema: 1
+
+defaults:
+  config: &default_config
+    startingHealth: 20
+    startingHandSize: 3
+    resourceCap: 6
+    activeUnitReplaceRule: discard_previous
+    deckOutCausesLoss: true
+    maxHandSize: null
+    firstPlayer: player
+
+  deck_2_of_each: &deck_2_of_each
+    - unit_striker
+    - unit_striker
+    - unit_guardian
+    - unit_guardian
+    - unit_charger
+    - unit_charger
+    - action_spark
+    - action_spark
+    - action_mend
+    - action_mend
+    - action_surge
+    - action_surge
+
+cases:
+
+  # -------------------------------------------------------------
+  # match.init
+  # -------------------------------------------------------------
+
+  - case_id: init.starting-state
+    operation: match.init
+    setup:
+      input:
+        config: *default_config
+        seed: 1
+        deckP: *deck_2_of_each
+        deckC: *deck_2_of_each
+    checks:
+      - { path: state.phase, op: equals, value: StartTurn }
+      - { path: state.activePlayerId, op: equals, value: player }
+      - { path: state.turnNumber, op: equals, value: 0 }
+      - { path: state.winner, op: equals, value: null }
+      - { path: state.players.player.health, op: equals, value: 20 }
+      - { path: state.players.cpu.health, op: equals, value: 20 }
+      - { path: state.players.player.currentResource, op: equals, value: 0 }
+      - { path: state.players.player.maxResource, op: equals, value: 0 }
+      - { path: state.players.player.resourceCap, op: equals, value: 6 }
+      - { path: state.players.player.deck, op: count, value: 12 }
+      - { path: state.players.cpu.deck, op: count, value: 12 }
+      - { path: state.players.player.hand, op: count, value: 0 }
+      - { path: state.players.player.discard, op: count, value: 0 }
+      - { path: state.players.player.activeUnit, op: equals, value: null }
+
+  - case_id: init.determinism-same-seed
+    operation: match.init
+    setup:
+      input:
+        config: *default_config
+        seed: 12345
+        deckP: *deck_2_of_each
+        deckC: *deck_2_of_each
+    notes: |
+      Run twice with the same seed and config. Decks must be in identical order.
+      Implementations: run init twice and compare deck arrays via deep equality.
+    checks:
+      - { path: state.players.player.deck, op: count, value: 12 }
+      - { path: state.players.cpu.deck, op: count, value: 12 }
+
+  - case_id: init.rejects-zero-starting-health
+    operation: match.init
+    setup:
+      input:
+        config:
+          startingHealth: 0
+          startingHandSize: 3
+          resourceCap: 6
+          activeUnitReplaceRule: discard_previous
+          deckOutCausesLoss: true
+          maxHandSize: null
+          firstPlayer: player
+        seed: 1
+        deckP: *deck_2_of_each
+        deckC: *deck_2_of_each
+    checks:
+      - { op: throws, value: startingHealth }
+
+  - case_id: init.rejects-unknown-card-id
+    operation: match.init
+    setup:
+      input:
+        config: *default_config
+        seed: 1
+        deckP: [unit_striker, unknown_card]
+        deckC: *deck_2_of_each
+    checks:
+      - { op: throws, value: unknown_card }
+
+  # -------------------------------------------------------------
+  # match.dealOpeningHands
+  # -------------------------------------------------------------
+
+  - case_id: deal.opening-hand-size
+    operation: match.dealOpeningHands
+    setup:
+      from_op: match.init
+      input:
+        config: *default_config
+        seed: 1
+        deckP: *deck_2_of_each
+        deckC: *deck_2_of_each
+    checks:
+      - { path: state.players.player.hand, op: count, value: 3 }
+      - { path: state.players.cpu.hand, op: count, value: 3 }
+      - { path: state.players.player.deck, op: count, value: 9 }
+      - { path: state.players.cpu.deck, op: count, value: 9 }
+      - { path: state.phase, op: equals, value: StartTurn }
+      - { path: events, op: event_order, value: [CARD_DRAWN, CARD_DRAWN, CARD_DRAWN, CARD_DRAWN, CARD_DRAWN, CARD_DRAWN] }
+
+  - case_id: deal.short-deck-no-deckout
+    operation: match.dealOpeningHands
+    setup:
+      from_op: match.init
+      input:
+        config: *default_config
+        seed: 1
+        deckP: [unit_striker, unit_striker]
+        deckC: *deck_2_of_each
+    checks:
+      - { path: state.players.player.hand, op: count, value: 2 }
+      - { path: state.players.player.deck, op: count, value: 0 }
+      - { path: state.winner, op: equals, value: null }
+
+  # -------------------------------------------------------------
+  # turn.startPhase
+  # -------------------------------------------------------------
+
+  - case_id: start.gains-one-resource-turn-one
+    operation: turn.startPhase
+    setup:
+      state:
+        config: *default_config
+        seed: 1
+        rngState: 1
+        matchId: m1
+        phase: StartTurn
+        activePlayerId: player
+        turnNumber: 0
+        winner: null
+        pendingAction: null
+        log: []
+        players:
+          player: { id: player, health: 20, maxHealth: 20, currentResource: 0, maxResource: 0, resourceCap: 6, deck: [], hand: [], discard: [], activeUnit: null }
+          cpu: { id: cpu, health: 20, maxHealth: 20, currentResource: 0, maxResource: 0, resourceCap: 6, deck: [], hand: [], discard: [], activeUnit: null }
+    checks:
+      - { path: state.turnNumber, op: equals, value: 1 }
+      - { path: state.players.player.maxResource, op: equals, value: 1 }
+      - { path: state.players.player.currentResource, op: equals, value: 1 }
+      - { path: state.players.cpu.maxResource, op: equals, value: 0 }
+      - { path: state.phase, op: equals, value: Draw }
+      - { path: events, op: event_kind, value: { kind: TURN_STARTED, playerId: player, turnNumber: 1 } }
+      - { path: events, op: event_kind, value: { kind: RESOURCE_CHANGED, playerId: player, current: 1, max: 1 } }
+
+  - case_id: start.caps-resource-at-six
+    operation: turn.startPhase
+    setup:
+      state:
+        config: *default_config
+        seed: 1
+        rngState: 1
+        matchId: m1
+        phase: StartTurn
+        activePlayerId: player
+        turnNumber: 10
+        winner: null
+        pendingAction: null
+        log: []
+        players:
+          player: { id: player, health: 20, maxHealth: 20, currentResource: 3, maxResource: 6, resourceCap: 6, deck: [], hand: [], discard: [], activeUnit: null }
+          cpu: { id: cpu, health: 20, maxHealth: 20, currentResource: 0, maxResource: 0, resourceCap: 6, deck: [], hand: [], discard: [], activeUnit: null }
+    checks:
+      - { path: state.players.player.maxResource, op: equals, value: 6 }
+      - { path: state.players.player.currentResource, op: equals, value: 6 }
+      - { path: state.turnNumber, op: equals, value: 11 }
+
+  - case_id: start.resets-attack-flag
+    operation: turn.startPhase
+    setup:
+      state:
+        config: *default_config
+        seed: 1
+        rngState: 1
+        matchId: m1
+        phase: StartTurn
+        activePlayerId: player
+        turnNumber: 1
+        winner: null
+        pendingAction: null
+        log: []
+        players:
+          player:
+            id: player
+            health: 20
+            maxHealth: 20
+            currentResource: 0
+            maxResource: 1
+            resourceCap: 6
+            deck: []
+            hand: []
+            discard: []
+            activeUnit:
+              instanceId: u1
+              cardId: unit_striker
+              ownerId: player
+              maxHealth: 3
+              currentHealth: 3
+              baseAttack: 2
+              attackModifiers: []
+              abilities: []
+              hasAttackedThisTurn: true
+          cpu: { id: cpu, health: 20, maxHealth: 20, currentResource: 0, maxResource: 0, resourceCap: 6, deck: [], hand: [], discard: [], activeUnit: null }
+    checks:
+      - { path: state.players.player.activeUnit.hasAttackedThisTurn, op: equals, value: false }
+
+  # -------------------------------------------------------------
+  # turn.draw
+  # -------------------------------------------------------------
+
+  - case_id: draw.basic
+    operation: turn.draw
+    setup:
+      state:
+        config: *default_config
+        seed: 1
+        rngState: 1
+        matchId: m1
+        phase: Draw
+        activePlayerId: player
+        turnNumber: 1
+        winner: null
+        pendingAction: null
+        log: []
+        players:
+          player:
+            id: player
+            health: 20
+            maxHealth: 20
+            currentResource: 1
+            maxResource: 1
+            resourceCap: 6
+            deck:
+              - { instanceId: i0p, cardId: unit_striker, ownerId: player }
+              - { instanceId: i1p, cardId: action_spark, ownerId: player }
+            hand: []
+            discard: []
+            activeUnit: null
+          cpu: { id: cpu, health: 20, maxHealth: 20, currentResource: 0, maxResource: 0, resourceCap: 6, deck: [], hand: [], discard: [], activeUnit: null }
+      input:
+        playerId: player
+    checks:
+      - { path: state.players.player.hand, op: count, value: 1 }
+      - { path: state.players.player.deck, op: count, value: 1 }
+      - { path: state.players.player.hand.0.cardId, op: equals, value: unit_striker }
+      - { path: state.phase, op: equals, value: MainPhase }
+      - { path: events, op: event_kind, value: { kind: CARD_DRAWN, playerId: player } }
+
+  - case_id: draw.empty-deck-causes-loss
+    operation: turn.draw
+    setup:
+      state:
+        config: *default_config
+        seed: 1
+        rngState: 1
+        matchId: m1
+        phase: Draw
+        activePlayerId: player
+        turnNumber: 1
+        winner: null
+        pendingAction: null
+        log: []
+        players:
+          player: { id: player, health: 20, maxHealth: 20, currentResource: 1, maxResource: 1, resourceCap: 6, deck: [], hand: [], discard: [], activeUnit: null }
+          cpu: { id: cpu, health: 20, maxHealth: 20, currentResource: 0, maxResource: 0, resourceCap: 6, deck: [], hand: [], discard: [], activeUnit: null }
+      input:
+        playerId: player
+    checks:
+      - { path: state.winner, op: equals, value: cpu }
+      - { path: state.phase, op: equals, value: GameOver }
+      - { path: events, op: event_kind, value: { kind: GAME_ENDED, winner: cpu, reason: deck_out } }
+
+  - case_id: draw.empty-deck-no-loss-when-disabled
+    operation: turn.draw
+    setup:
+      state:
+        config:
+          startingHealth: 20
+          startingHandSize: 3
+          resourceCap: 6
+          activeUnitReplaceRule: discard_previous
+          deckOutCausesLoss: false
+          maxHandSize: null
+          firstPlayer: player
+        seed: 1
+        rngState: 1
+        matchId: m1
+        phase: Draw
+        activePlayerId: player
+        turnNumber: 1
+        winner: null
+        pendingAction: null
+        log: []
+        players:
+          player: { id: player, health: 20, maxHealth: 20, currentResource: 1, maxResource: 1, resourceCap: 6, deck: [], hand: [], discard: [], activeUnit: null }
+          cpu: { id: cpu, health: 20, maxHealth: 20, currentResource: 0, maxResource: 0, resourceCap: 6, deck: [], hand: [], discard: [], activeUnit: null }
+      input:
+        playerId: player
+    checks:
+      - { path: state.winner, op: equals, value: null }
+      - { path: state.phase, op: equals, value: MainPhase }
+
+  # -------------------------------------------------------------
+  # card.canPlay
+  # -------------------------------------------------------------
+
+  - case_id: canPlay.unaffordable
+    operation: card.canPlay
+    setup:
+      state:
+        config: *default_config
+        seed: 1
+        rngState: 1
+        matchId: m1
+        phase: MainPhase
+        activePlayerId: player
+        turnNumber: 1
+        winner: null
+        pendingAction: null
+        log: []
+        players:
+          player:
+            id: player
+            health: 20
+            maxHealth: 20
+            currentResource: 0
+            maxResource: 1
+            resourceCap: 6
+            deck: []
+            hand:
+              - { instanceId: h1, cardId: unit_charger, ownerId: player }
+            discard: []
+            activeUnit: null
+          cpu: { id: cpu, health: 20, maxHealth: 20, currentResource: 0, maxResource: 0, resourceCap: 6, deck: [], hand: [], discard: [], activeUnit: null }
+      input:
+        playerId: player
+        cardInstanceId: h1
+    checks:
+      - { path: result.playable, op: equals, value: false }
+      - { path: result.reason, op: equals, value: insufficient_resource }
+
+  - case_id: canPlay.spark-needs-enemy-unit
+    operation: card.canPlay
+    setup:
+      state:
+        config: *default_config
+        seed: 1
+        rngState: 1
+        matchId: m1
+        phase: MainPhase
+        activePlayerId: player
+        turnNumber: 1
+        winner: null
+        pendingAction: null
+        log: []
+        players:
+          player:
+            id: player
+            health: 20
+            maxHealth: 20
+            currentResource: 1
+            maxResource: 1
+            resourceCap: 6
+            deck: []
+            hand:
+              - { instanceId: h1, cardId: action_spark, ownerId: player }
+            discard: []
+            activeUnit: null
+          cpu: { id: cpu, health: 20, maxHealth: 20, currentResource: 0, maxResource: 0, resourceCap: 6, deck: [], hand: [], discard: [], activeUnit: null }
+      input:
+        playerId: player
+        cardInstanceId: h1
+    checks:
+      - { path: result.playable, op: equals, value: false }
+      - { path: result.reason, op: equals, value: no_valid_target }
+
+  - case_id: canPlay.mend-needs-friendly-unit
+    operation: card.canPlay
+    setup:
+      state:
+        config: *default_config
+        seed: 1
+        rngState: 1
+        matchId: m1
+        phase: MainPhase
+        activePlayerId: player
+        turnNumber: 1
+        winner: null
+        pendingAction: null
+        log: []
+        players:
+          player:
+            id: player
+            health: 20
+            maxHealth: 20
+            currentResource: 1
+            maxResource: 1
+            resourceCap: 6
+            deck: []
+            hand:
+              - { instanceId: h1, cardId: action_mend, ownerId: player }
+            discard: []
+            activeUnit: null
+          cpu: { id: cpu, health: 20, maxHealth: 20, currentResource: 0, maxResource: 0, resourceCap: 6, deck: [], hand: [], discard: [], activeUnit: null }
+      input:
+        playerId: player
+        cardInstanceId: h1
+    checks:
+      - { path: result.playable, op: equals, value: false }
+      - { path: result.reason, op: equals, value: no_valid_target }
+
+  - case_id: canPlay.unit-blocked-when-replace-blocked
+    operation: card.canPlay
+    setup:
+      state:
+        config:
+          startingHealth: 20
+          startingHandSize: 3
+          resourceCap: 6
+          activeUnitReplaceRule: block_new
+          deckOutCausesLoss: true
+          maxHandSize: null
+          firstPlayer: player
+        seed: 1
+        rngState: 1
+        matchId: m1
+        phase: MainPhase
+        activePlayerId: player
+        turnNumber: 1
+        winner: null
+        pendingAction: null
+        log: []
+        players:
+          player:
+            id: player
+            health: 20
+            maxHealth: 20
+            currentResource: 3
+            maxResource: 3
+            resourceCap: 6
+            deck: []
+            hand:
+              - { instanceId: h1, cardId: unit_charger, ownerId: player }
+            discard: []
+            activeUnit: { instanceId: u1, cardId: unit_striker, ownerId: player, maxHealth: 3, currentHealth: 3, baseAttack: 2, attackModifiers: [], abilities: [], hasAttackedThisTurn: false }
+          cpu: { id: cpu, health: 20, maxHealth: 20, currentResource: 0, maxResource: 0, resourceCap: 6, deck: [], hand: [], discard: [], activeUnit: null }
+      input:
+        playerId: player
+        cardInstanceId: h1
+    checks:
+      - { path: result.playable, op: equals, value: false }
+      - { path: result.reason, op: equals, value: active_slot_occupied }
+
+  # -------------------------------------------------------------
+  # card.play: units
+  # -------------------------------------------------------------
+
+  - case_id: play.striker-summons
+    operation: card.play
+    setup:
+      state:
+        config: *default_config
+        seed: 1
+        rngState: 1
+        matchId: m1
+        phase: MainPhase
+        activePlayerId: player
+        turnNumber: 1
+        winner: null
+        pendingAction: null
+        log: []
+        players:
+          player:
+            id: player
+            health: 20
+            maxHealth: 20
+            currentResource: 1
+            maxResource: 1
+            resourceCap: 6
+            deck: []
+            hand:
+              - { instanceId: h1, cardId: unit_striker, ownerId: player }
+            discard: []
+            activeUnit: null
+          cpu: { id: cpu, health: 20, maxHealth: 20, currentResource: 0, maxResource: 0, resourceCap: 6, deck: [], hand: [], discard: [], activeUnit: null }
+      input:
+        playerId: player
+        cardInstanceId: h1
+    checks:
+      - { path: state.players.player.activeUnit.cardId, op: equals, value: unit_striker }
+      - { path: state.players.player.activeUnit.currentHealth, op: equals, value: 3 }
+      - { path: state.players.player.activeUnit.maxHealth, op: equals, value: 3 }
+      - { path: state.players.player.activeUnit.baseAttack, op: equals, value: 2 }
+      - { path: state.players.player.activeUnit.hasAttackedThisTurn, op: equals, value: false }
+      - { path: state.players.player.hand, op: count, value: 0 }
+      - { path: state.players.player.currentResource, op: equals, value: 0 }
+      - { path: events, op: event_order, value: [RESOURCE_CHANGED, CARD_PLAYED, UNIT_SUMMONED] }
+
+  - case_id: play.replace-discards-previous
+    operation: card.play
+    setup:
+      state:
+        config: *default_config
+        seed: 1
+        rngState: 1
+        matchId: m1
+        phase: MainPhase
+        activePlayerId: player
+        turnNumber: 3
+        winner: null
+        pendingAction: null
+        log: []
+        players:
+          player:
+            id: player
+            health: 20
+            maxHealth: 20
+            currentResource: 3
+            maxResource: 3
+            resourceCap: 6
+            deck: []
+            hand:
+              - { instanceId: h1, cardId: unit_charger, ownerId: player }
+            discard: []
+            activeUnit: { instanceId: u1, cardId: unit_striker, ownerId: player, maxHealth: 3, currentHealth: 3, baseAttack: 2, attackModifiers: [], abilities: [], hasAttackedThisTurn: false }
+          cpu: { id: cpu, health: 20, maxHealth: 20, currentResource: 0, maxResource: 0, resourceCap: 6, deck: [], hand: [], discard: [], activeUnit: null }
+      input:
+        playerId: player
+        cardInstanceId: h1
+    checks:
+      - { path: state.players.player.activeUnit.cardId, op: equals, value: unit_charger }
+      - { path: state.players.player.discard, op: count, value: 1 }
+      - { path: state.players.player.discard.0.cardId, op: equals, value: unit_striker }
+      - { path: events, op: event_kind, value: { kind: UNIT_REPLACED, playerId: player } }
+
+  # -------------------------------------------------------------
+  # card.play: actions
+  # -------------------------------------------------------------
+
+  - case_id: play.spark-damages-enemy-unit
+    operation: card.play
+    setup:
+      state:
+        config: *default_config
+        seed: 1
+        rngState: 1
+        matchId: m1
+        phase: MainPhase
+        activePlayerId: player
+        turnNumber: 2
+        winner: null
+        pendingAction: null
+        log: []
+        players:
+          player:
+            id: player
+            health: 20
+            maxHealth: 20
+            currentResource: 1
+            maxResource: 2
+            resourceCap: 6
+            deck: []
+            hand:
+              - { instanceId: h1, cardId: action_spark, ownerId: player }
+            discard: []
+            activeUnit: null
+          cpu:
+            id: cpu
+            health: 20
+            maxHealth: 20
+            currentResource: 0
+            maxResource: 0
+            resourceCap: 6
+            deck: []
+            hand: []
+            discard: []
+            activeUnit: { instanceId: cu1, cardId: unit_guardian, ownerId: cpu, maxHealth: 5, currentHealth: 5, baseAttack: 1, attackModifiers: [], abilities: [], hasAttackedThisTurn: false }
+      input:
+        playerId: player
+        cardInstanceId: h1
+    checks:
+      - { path: state.players.cpu.activeUnit.currentHealth, op: equals, value: 3 }
+      - { path: state.players.player.hand, op: count, value: 0 }
+      - { path: state.players.player.discard, op: count, value: 1 }
+      - { path: state.players.player.discard.0.cardId, op: equals, value: action_spark }
+      - { path: events, op: event_kind, value: { kind: DAMAGE_DEALT, amount: 2 } }
+
+  - case_id: play.spark-defeats-low-hp-unit
+    operation: card.play
+    setup:
+      state:
+        config: *default_config
+        seed: 1
+        rngState: 1
+        matchId: m1
+        phase: MainPhase
+        activePlayerId: player
+        turnNumber: 1
+        winner: null
+        pendingAction: null
+        log: []
+        players:
+          player:
+            id: player
+            health: 20
+            maxHealth: 20
+            currentResource: 1
+            maxResource: 1
+            resourceCap: 6
+            deck: []
+            hand:
+              - { instanceId: h1, cardId: action_spark, ownerId: player }
+            discard: []
+            activeUnit: null
+          cpu:
+            id: cpu
+            health: 20
+            maxHealth: 20
+            currentResource: 0
+            maxResource: 0
+            resourceCap: 6
+            deck: []
+            hand: []
+            discard: []
+            activeUnit: { instanceId: cu1, cardId: unit_striker, ownerId: cpu, maxHealth: 3, currentHealth: 2, baseAttack: 2, attackModifiers: [], abilities: [], hasAttackedThisTurn: false }
+      input:
+        playerId: player
+        cardInstanceId: h1
+    checks:
+      - { path: state.players.cpu.activeUnit, op: equals, value: null }
+      - { path: state.players.cpu.discard, op: count, value: 1 }
+      - { path: state.players.cpu.discard.0.cardId, op: equals, value: unit_striker }
+      - { path: events, op: event_order, value: [CARD_PLAYED, DAMAGE_DEALT, UNIT_DEFEATED, CARD_DISCARDED] }
+
+  - case_id: play.mend-heals-not-above-max
+    operation: card.play
+    setup:
+      state:
+        config: *default_config
+        seed: 1
+        rngState: 1
+        matchId: m1
+        phase: MainPhase
+        activePlayerId: player
+        turnNumber: 1
+        winner: null
+        pendingAction: null
+        log: []
+        players:
+          player:
+            id: player
+            health: 20
+            maxHealth: 20
+            currentResource: 1
+            maxResource: 1
+            resourceCap: 6
+            deck: []
+            hand:
+              - { instanceId: h1, cardId: action_mend, ownerId: player }
+            discard: []
+            activeUnit: { instanceId: u1, cardId: unit_guardian, ownerId: player, maxHealth: 5, currentHealth: 4, baseAttack: 1, attackModifiers: [], abilities: [], hasAttackedThisTurn: false }
+          cpu: { id: cpu, health: 20, maxHealth: 20, currentResource: 0, maxResource: 0, resourceCap: 6, deck: [], hand: [], discard: [], activeUnit: null }
+      input:
+        playerId: player
+        cardInstanceId: h1
+    checks:
+      - { path: state.players.player.activeUnit.currentHealth, op: equals, value: 5 }
+      - { path: events, op: event_kind, value: { kind: HEALTH_CHANGED, before: 4, after: 5 } }
+
+  - case_id: play.mend-at-full-health-noops-value
+    operation: card.play
+    setup:
+      state:
+        config: *default_config
+        seed: 1
+        rngState: 1
+        matchId: m1
+        phase: MainPhase
+        activePlayerId: player
+        turnNumber: 1
+        winner: null
+        pendingAction: null
+        log: []
+        players:
+          player:
+            id: player
+            health: 20
+            maxHealth: 20
+            currentResource: 1
+            maxResource: 1
+            resourceCap: 6
+            deck: []
+            hand:
+              - { instanceId: h1, cardId: action_mend, ownerId: player }
+            discard: []
+            activeUnit: { instanceId: u1, cardId: unit_striker, ownerId: player, maxHealth: 3, currentHealth: 3, baseAttack: 2, attackModifiers: [], abilities: [], hasAttackedThisTurn: false }
+          cpu: { id: cpu, health: 20, maxHealth: 20, currentResource: 0, maxResource: 0, resourceCap: 6, deck: [], hand: [], discard: [], activeUnit: null }
+      input:
+        playerId: player
+        cardInstanceId: h1
+    checks:
+      - { path: state.players.player.activeUnit.currentHealth, op: equals, value: 3 }
+      - { path: state.players.player.currentResource, op: equals, value: 0 }
+      - { path: state.players.player.discard, op: count, value: 1 }
+
+  - case_id: play.surge-adds-temporary-attack
+    operation: card.play
+    setup:
+      state:
+        config: *default_config
+        seed: 1
+        rngState: 1
+        matchId: m1
+        phase: MainPhase
+        activePlayerId: player
+        turnNumber: 2
+        winner: null
+        pendingAction: null
+        log: []
+        players:
+          player:
+            id: player
+            health: 20
+            maxHealth: 20
+            currentResource: 2
+            maxResource: 2
+            resourceCap: 6
+            deck: []
+            hand:
+              - { instanceId: h1, cardId: action_surge, ownerId: player }
+            discard: []
+            activeUnit: { instanceId: u1, cardId: unit_striker, ownerId: player, maxHealth: 3, currentHealth: 3, baseAttack: 2, attackModifiers: [], abilities: [], hasAttackedThisTurn: false }
+          cpu: { id: cpu, health: 20, maxHealth: 20, currentResource: 0, maxResource: 0, resourceCap: 6, deck: [], hand: [], discard: [], activeUnit: null }
+      input:
+        playerId: player
+        cardInstanceId: h1
+    checks:
+      - { path: state.players.player.activeUnit.attackModifiers, op: count, value: 1 }
+      - { path: state.players.player.activeUnit.attackModifiers.0.amount, op: equals, value: 2 }
+      - { path: state.players.player.activeUnit.attackModifiers.0.expiresEndOfTurn, op: equals, value: true }
+      - { path: events, op: event_kind, value: { kind: ATTACK_MODIFIED, amount: 2, duration: until_end_of_turn } }
+
+  # -------------------------------------------------------------
+  # combat.attack
+  # -------------------------------------------------------------
+
+  - case_id: attack.unit-vs-unit-damages
+    operation: combat.attack
+    setup:
+      state:
+        config: *default_config
+        seed: 1
+        rngState: 1
+        matchId: m1
+        phase: MainPhase
+        activePlayerId: player
+        turnNumber: 2
+        winner: null
+        pendingAction: null
+        log: []
+        players:
+          player:
+            id: player
+            health: 20
+            maxHealth: 20
+            currentResource: 0
+            maxResource: 2
+            resourceCap: 6
+            deck: []
+            hand: []
+            discard: []
+            activeUnit: { instanceId: u1, cardId: unit_striker, ownerId: player, maxHealth: 3, currentHealth: 3, baseAttack: 2, attackModifiers: [], abilities: [], hasAttackedThisTurn: false }
+          cpu:
+            id: cpu
+            health: 20
+            maxHealth: 20
+            currentResource: 0
+            maxResource: 0
+            resourceCap: 6
+            deck: []
+            hand: []
+            discard: []
+            activeUnit: { instanceId: cu1, cardId: unit_guardian, ownerId: cpu, maxHealth: 5, currentHealth: 5, baseAttack: 1, attackModifiers: [], abilities: [], hasAttackedThisTurn: false }
+      input:
+        playerId: player
+    notes: |
+      No counter-attack in MVP. CPU Guardian (attack 1) takes no damage from being the defender.
+    checks:
+      - { path: state.players.cpu.activeUnit.currentHealth, op: equals, value: 3 }
+      - { path: state.players.player.activeUnit.currentHealth, op: equals, value: 3 }
+      - { path: state.players.player.activeUnit.hasAttackedThisTurn, op: equals, value: true }
+      - { path: events, op: event_kind, value: { kind: UNIT_ATTACKED, damage: 2 } }
+
+  - case_id: attack.unit-vs-player-when-no-defender
+    operation: combat.attack
+    setup:
+      state:
+        config: *default_config
+        seed: 1
+        rngState: 1
+        matchId: m1
+        phase: MainPhase
+        activePlayerId: player
+        turnNumber: 2
+        winner: null
+        pendingAction: null
+        log: []
+        players:
+          player:
+            id: player
+            health: 20
+            maxHealth: 20
+            currentResource: 0
+            maxResource: 2
+            resourceCap: 6
+            deck: []
+            hand: []
+            discard: []
+            activeUnit: { instanceId: u1, cardId: unit_striker, ownerId: player, maxHealth: 3, currentHealth: 3, baseAttack: 2, attackModifiers: [], abilities: [], hasAttackedThisTurn: false }
+          cpu: { id: cpu, health: 20, maxHealth: 20, currentResource: 0, maxResource: 0, resourceCap: 6, deck: [], hand: [], discard: [], activeUnit: null }
+      input:
+        playerId: player
+    checks:
+      - { path: state.players.cpu.health, op: equals, value: 18 }
+      - { path: state.players.player.activeUnit.hasAttackedThisTurn, op: equals, value: true }
+      - { path: events, op: event_kind, value: { kind: UNIT_ATTACKED, damage: 2, bonus: 0 } }
+
+  - case_id: attack.charger-bonus-vs-player
+    operation: combat.attack
+    setup:
+      state:
+        config: *default_config
+        seed: 1
+        rngState: 1
+        matchId: m1
+        phase: MainPhase
+        activePlayerId: player
+        turnNumber: 3
+        winner: null
+        pendingAction: null
+        log: []
+        players:
+          player:
+            id: player
+            health: 20
+            maxHealth: 20
+            currentResource: 0
+            maxResource: 3
+            resourceCap: 6
+            deck: []
+            hand: []
+            discard: []
+            activeUnit:
+              instanceId: u1
+              cardId: unit_charger
+              ownerId: player
+              maxHealth: 4
+              currentHealth: 4
+              baseAttack: 3
+              attackModifiers: []
+              abilities: [{ id: bonus_damage_on_direct_attack, params: { amount: 1 } }]
+              hasAttackedThisTurn: false
+          cpu: { id: cpu, health: 20, maxHealth: 20, currentResource: 0, maxResource: 0, resourceCap: 6, deck: [], hand: [], discard: [], activeUnit: null }
+      input:
+        playerId: player
+    checks:
+      - { path: state.players.cpu.health, op: equals, value: 16 }
+      - { path: events, op: event_kind, value: { kind: UNIT_ATTACKED, damage: 3, bonus: 1 } }
+
+  - case_id: attack.charger-bonus-does-not-apply-vs-unit
+    operation: combat.attack
+    setup:
+      state:
+        config: *default_config
+        seed: 1
+        rngState: 1
+        matchId: m1
+        phase: MainPhase
+        activePlayerId: player
+        turnNumber: 3
+        winner: null
+        pendingAction: null
+        log: []
+        players:
+          player:
+            id: player
+            health: 20
+            maxHealth: 20
+            currentResource: 0
+            maxResource: 3
+            resourceCap: 6
+            deck: []
+            hand: []
+            discard: []
+            activeUnit:
+              instanceId: u1
+              cardId: unit_charger
+              ownerId: player
+              maxHealth: 4
+              currentHealth: 4
+              baseAttack: 3
+              attackModifiers: []
+              abilities: [{ id: bonus_damage_on_direct_attack, params: { amount: 1 } }]
+              hasAttackedThisTurn: false
+          cpu:
+            id: cpu
+            health: 20
+            maxHealth: 20
+            currentResource: 0
+            maxResource: 0
+            resourceCap: 6
+            deck: []
+            hand: []
+            discard: []
+            activeUnit: { instanceId: cu1, cardId: unit_guardian, ownerId: cpu, maxHealth: 5, currentHealth: 5, baseAttack: 1, attackModifiers: [], abilities: [], hasAttackedThisTurn: false }
+      input:
+        playerId: player
+    checks:
+      - { path: state.players.cpu.activeUnit.currentHealth, op: equals, value: 2 }
+      - { path: events, op: event_kind, value: { kind: UNIT_ATTACKED, damage: 3, bonus: 0 } }
+
+  - case_id: attack.with-surge-buff
+    operation: combat.attack
+    setup:
+      state:
+        config: *default_config
+        seed: 1
+        rngState: 1
+        matchId: m1
+        phase: MainPhase
+        activePlayerId: player
+        turnNumber: 2
+        winner: null
+        pendingAction: null
+        log: []
+        players:
+          player:
+            id: player
+            health: 20
+            maxHealth: 20
+            currentResource: 0
+            maxResource: 2
+            resourceCap: 6
+            deck: []
+            hand: []
+            discard: []
+            activeUnit:
+              instanceId: u1
+              cardId: unit_striker
+              ownerId: player
+              maxHealth: 3
+              currentHealth: 3
+              baseAttack: 2
+              attackModifiers: [{ amount: 2, expiresEndOfTurn: true }]
+              abilities: []
+              hasAttackedThisTurn: false
+          cpu:
+            id: cpu
+            health: 20
+            maxHealth: 20
+            currentResource: 0
+            maxResource: 0
+            resourceCap: 6
+            deck: []
+            hand: []
+            discard: []
+            activeUnit: { instanceId: cu1, cardId: unit_striker, ownerId: cpu, maxHealth: 3, currentHealth: 3, baseAttack: 2, attackModifiers: [], abilities: [], hasAttackedThisTurn: false }
+      input:
+        playerId: player
+    checks:
+      - { path: state.players.cpu.activeUnit, op: equals, value: null }
+      - { path: state.players.cpu.discard, op: count, value: 1 }
+      - { path: events, op: event_kind, value: { kind: UNIT_ATTACKED, damage: 4 } }
+
+  - case_id: attack.cannot-attack-twice
+    operation: combat.attack
+    setup:
+      state:
+        config: *default_config
+        seed: 1
+        rngState: 1
+        matchId: m1
+        phase: MainPhase
+        activePlayerId: player
+        turnNumber: 2
+        winner: null
+        pendingAction: null
+        log: []
+        players:
+          player:
+            id: player
+            health: 20
+            maxHealth: 20
+            currentResource: 0
+            maxResource: 2
+            resourceCap: 6
+            deck: []
+            hand: []
+            discard: []
+            activeUnit: { instanceId: u1, cardId: unit_striker, ownerId: player, maxHealth: 3, currentHealth: 3, baseAttack: 2, attackModifiers: [], abilities: [], hasAttackedThisTurn: true }
+          cpu: { id: cpu, health: 20, maxHealth: 20, currentResource: 0, maxResource: 0, resourceCap: 6, deck: [], hand: [], discard: [], activeUnit: null }
+      input:
+        playerId: player
+    checks:
+      - { op: throws, value: already }
+
+  - case_id: attack.kills-player
+    operation: combat.attack
+    setup:
+      state:
+        config: *default_config
+        seed: 1
+        rngState: 1
+        matchId: m1
+        phase: MainPhase
+        activePlayerId: player
+        turnNumber: 5
+        winner: null
+        pendingAction: null
+        log: []
+        players:
+          player:
+            id: player
+            health: 20
+            maxHealth: 20
+            currentResource: 0
+            maxResource: 5
+            resourceCap: 6
+            deck: []
+            hand: []
+            discard: []
+            activeUnit: { instanceId: u1, cardId: unit_striker, ownerId: player, maxHealth: 3, currentHealth: 3, baseAttack: 2, attackModifiers: [], abilities: [], hasAttackedThisTurn: false }
+          cpu: { id: cpu, health: 1, maxHealth: 20, currentResource: 0, maxResource: 0, resourceCap: 6, deck: [], hand: [], discard: [], activeUnit: null }
+      input:
+        playerId: player
+    checks:
+      - { path: state.players.cpu.health, op: equals, value: 0 }
+      - { path: state.winner, op: equals, value: player }
+      - { path: state.phase, op: equals, value: GameOver }
+      - { path: events, op: event_kind, value: { kind: GAME_ENDED, winner: player, reason: health_zero } }
+
+  # -------------------------------------------------------------
+  # turn.endPhase
+  # -------------------------------------------------------------
+
+  - case_id: end.swaps-active-player
+    operation: turn.endPhase
+    setup:
+      state:
+        config: *default_config
+        seed: 1
+        rngState: 1
+        matchId: m1
+        phase: MainPhase
+        activePlayerId: player
+        turnNumber: 1
+        winner: null
+        pendingAction: null
+        log: []
+        players:
+          player: { id: player, health: 20, maxHealth: 20, currentResource: 0, maxResource: 1, resourceCap: 6, deck: [], hand: [], discard: [], activeUnit: null }
+          cpu: { id: cpu, health: 20, maxHealth: 20, currentResource: 0, maxResource: 0, resourceCap: 6, deck: [], hand: [], discard: [], activeUnit: null }
+    checks:
+      - { path: state.activePlayerId, op: equals, value: cpu }
+      - { path: state.phase, op: equals, value: StartTurn }
+      - { path: events, op: event_kind, value: { kind: TURN_ENDED, previousActivePlayerId: player, nextActivePlayerId: cpu } }
+
+  - case_id: end.expires-temporary-buffs
+    operation: turn.endPhase
+    setup:
+      state:
+        config: *default_config
+        seed: 1
+        rngState: 1
+        matchId: m1
+        phase: BattlePhase
+        activePlayerId: player
+        turnNumber: 2
+        winner: null
+        pendingAction: null
+        log: []
+        players:
+          player:
+            id: player
+            health: 20
+            maxHealth: 20
+            currentResource: 0
+            maxResource: 2
+            resourceCap: 6
+            deck: []
+            hand: []
+            discard: []
+            activeUnit:
+              instanceId: u1
+              cardId: unit_striker
+              ownerId: player
+              maxHealth: 3
+              currentHealth: 3
+              baseAttack: 2
+              attackModifiers: [{ amount: 2, expiresEndOfTurn: true }, { amount: 1, expiresEndOfTurn: false }]
+              abilities: []
+              hasAttackedThisTurn: true
+          cpu: { id: cpu, health: 20, maxHealth: 20, currentResource: 0, maxResource: 0, resourceCap: 6, deck: [], hand: [], discard: [], activeUnit: null }
+    checks:
+      - { path: state.players.player.activeUnit.attackModifiers, op: count, value: 1 }
+      - { path: state.players.player.activeUnit.attackModifiers.0.amount, op: equals, value: 1 }
+      - { path: state.players.player.activeUnit.attackModifiers.0.expiresEndOfTurn, op: equals, value: false }
+
+  # -------------------------------------------------------------
+  # win.check
+  # -------------------------------------------------------------
+
+  - case_id: win.player-wins-when-cpu-hp-zero
+    operation: win.check
+    setup:
+      state:
+        config: *default_config
+        seed: 1
+        rngState: 1
+        matchId: m1
+        phase: MainPhase
+        activePlayerId: player
+        turnNumber: 5
+        winner: null
+        pendingAction: null
+        log: []
+        players:
+          player: { id: player, health: 5, maxHealth: 20, currentResource: 0, maxResource: 5, resourceCap: 6, deck: [], hand: [], discard: [], activeUnit: null }
+          cpu: { id: cpu, health: 0, maxHealth: 20, currentResource: 0, maxResource: 5, resourceCap: 6, deck: [], hand: [], discard: [], activeUnit: null }
+    checks:
+      - { path: result.winner, op: equals, value: player }
+      - { path: result.reason, op: equals, value: health_zero }
+
+  - case_id: win.no-winner-yet
+    operation: win.check
+    setup:
+      state:
+        config: *default_config
+        seed: 1
+        rngState: 1
+        matchId: m1
+        phase: MainPhase
+        activePlayerId: player
+        turnNumber: 3
+        winner: null
+        pendingAction: null
+        log: []
+        players:
+          player: { id: player, health: 15, maxHealth: 20, currentResource: 0, maxResource: 3, resourceCap: 6, deck: [], hand: [], discard: [], activeUnit: null }
+          cpu: { id: cpu, health: 12, maxHealth: 20, currentResource: 0, maxResource: 3, resourceCap: 6, deck: [], hand: [], discard: [], activeUnit: null }
+    checks:
+      - { path: result.winner, op: equals, value: null }
+
+  # -------------------------------------------------------------
+  # cpu.chooseActions
+  # -------------------------------------------------------------
+
+  - case_id: cpu.plays-unit-when-no-active
+    operation: cpu.chooseActions
+    setup:
+      state:
+        config: *default_config
+        seed: 1
+        rngState: 1
+        matchId: m1
+        phase: MainPhase
+        activePlayerId: cpu
+        turnNumber: 2
+        winner: null
+        pendingAction: null
+        log: []
+        players:
+          player: { id: player, health: 20, maxHealth: 20, currentResource: 0, maxResource: 2, resourceCap: 6, deck: [], hand: [], discard: [], activeUnit: null }
+          cpu:
+            id: cpu
+            health: 20
+            maxHealth: 20
+            currentResource: 2
+            maxResource: 2
+            resourceCap: 6
+            deck: []
+            hand:
+              - { instanceId: ch1, cardId: unit_striker, ownerId: cpu }
+              - { instanceId: ch2, cardId: unit_guardian, ownerId: cpu }
+            discard: []
+            activeUnit: null
+    notes: |
+      Priority 4 (establish board) picks the highest-cost affordable unit.
+      Guardian (cost 2) is preferred over Striker (cost 1).
+      Then priority 6 attacks with the new unit.
+      Then end turn.
+    checks:
+      - { path: result.0.kind, op: equals, value: play_card }
+      - { path: result.0.instanceId, op: equals, value: ch2 }
+      - { path: result.1.kind, op: equals, value: attack }
+      - { path: result.2.kind, op: equals, value: end_turn }
+
+  - case_id: cpu.uses-lethal-spark
+    operation: cpu.chooseActions
+    setup:
+      state:
+        config: *default_config
+        seed: 1
+        rngState: 1
+        matchId: m1
+        phase: MainPhase
+        activePlayerId: cpu
+        turnNumber: 3
+        winner: null
+        pendingAction: null
+        log: []
+        players:
+          player:
+            id: player
+            health: 20
+            maxHealth: 20
+            currentResource: 0
+            maxResource: 3
+            resourceCap: 6
+            deck: []
+            hand: []
+            discard: []
+            activeUnit: { instanceId: pu1, cardId: unit_striker, ownerId: player, maxHealth: 3, currentHealth: 2, baseAttack: 2, attackModifiers: [], abilities: [], hasAttackedThisTurn: false }
+          cpu:
+            id: cpu
+            health: 20
+            maxHealth: 20
+            currentResource: 1
+            maxResource: 3
+            resourceCap: 6
+            deck: []
+            hand:
+              - { instanceId: ch1, cardId: action_spark, ownerId: cpu }
+            discard: []
+            activeUnit: null
+    notes: |
+      Priority 1: Spark can defeat player's Striker (HP 2). Take it.
+    checks:
+      - { path: result.0.kind, op: equals, value: play_card }
+      - { path: result.0.instanceId, op: equals, value: ch1 }
+
+  - case_id: cpu.ends-turn-when-no-useful-action
+    operation: cpu.chooseActions
+    setup:
+      state:
+        config: *default_config
+        seed: 1
+        rngState: 1
+        matchId: m1
+        phase: MainPhase
+        activePlayerId: cpu
+        turnNumber: 2
+        winner: null
+        pendingAction: null
+        log: []
+        players:
+          player: { id: player, health: 20, maxHealth: 20, currentResource: 0, maxResource: 2, resourceCap: 6, deck: [], hand: [], discard: [], activeUnit: null }
+          cpu:
+            id: cpu
+            health: 20
+            maxHealth: 20
+            currentResource: 0
+            maxResource: 2
+            resourceCap: 6
+            deck: []
+            hand:
+              - { instanceId: ch1, cardId: unit_charger, ownerId: cpu }
+            discard: []
+            activeUnit: null
+    notes: |
+      Charger costs 3, CPU has 0 resource. Can't play. No active unit. End turn.
+    checks:
+      - { path: result, op: count, value: 1 }
+      - { path: result.0.kind, op: equals, value: end_turn }
+
+  - case_id: cpu.heals-low-hp-unit
+    operation: cpu.chooseActions
+    setup:
+      state:
+        config: *default_config
+        seed: 1
+        rngState: 1
+        matchId: m1
+        phase: MainPhase
+        activePlayerId: cpu
+        turnNumber: 3
+        winner: null
+        pendingAction: null
+        log: []
+        players:
+          player: { id: player, health: 20, maxHealth: 20, currentResource: 0, maxResource: 3, resourceCap: 6, deck: [], hand: [], discard: [], activeUnit: null }
+          cpu:
+            id: cpu
+            health: 20
+            maxHealth: 20
+            currentResource: 1
+            maxResource: 3
+            resourceCap: 6
+            deck: []
+            hand:
+              - { instanceId: ch1, cardId: action_mend, ownerId: cpu }
+            discard: []
+            activeUnit: { instanceId: cu1, cardId: unit_guardian, ownerId: cpu, maxHealth: 5, currentHealth: 2, baseAttack: 1, attackModifiers: [], abilities: [], hasAttackedThisTurn: false }
+    notes: |
+      Guardian at 2 of 5 HP. Floor(5 / 2) = 2. currentHealth (2) <= 2. Heal applies.
+    checks:
+      - { path: result.0.kind, op: equals, value: play_card }
+      - { path: result.0.instanceId, op: equals, value: ch1 }
+      - { path: result.1.kind, op: equals, value: attack }
+      - { path: result.2.kind, op: equals, value: end_turn }
+
+# ---------------------------------------------------------------
+# Scenarios: multi-step deterministic traces.
+# ---------------------------------------------------------------
+
+scenarios:
+
+  - scenario_id: full-match-trace
+    name: a deterministic trace of an entire match
+    notes: |
+      See examples/sample-match-trace.yaml for the full step-by-step expected log.
+      An implementation passes this scenario iff it reproduces the same winner and
+      the same per-turn (health.player, health.cpu) snapshots at the listed checkpoints.
+    setup:
+      from_op: match.init
+      input:
+        config: *default_config
+        seed: 42
+        deckP: *deck_2_of_each
+        deckC: *deck_2_of_each
+      then:
+        - op: match.dealOpeningHands
+    checkpoints_file: examples/sample-match-trace.yaml

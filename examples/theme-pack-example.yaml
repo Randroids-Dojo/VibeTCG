@@ -1,0 +1,147 @@
+# Sample Theme Pack: Forest Friends
+# ---------------------------------------------------------------
+# A cute-animals reskin of the six reference cards. Demonstrates
+# every field of the theme pack contract documented in THEME.md.
+# Drop this into your implementation's themes directory; the theme
+# selector should pick it up automatically.
+#
+# Per GDD acceptance criteria: "The same rules work with generic
+# card names and at least one alternate theme mapping." This is
+# that alternate.
+# ---------------------------------------------------------------
+
+id: forest-friends
+name: Forest Friends
+author: card-battler-ghost reference
+version: 1.0.0
+
+# Card-level overrides. Every cardId from SPEC.md must be present
+# for a complete theme. Missing entries fall back to the SPEC
+# baseName.
+
+cards:
+  unit_striker:
+    displayName: Tiny Fox
+    artKey: forest-friends/tiny-fox.png
+    flavorText: Quick paws, sharper teeth.
+
+  unit_guardian:
+    displayName: Shell Turtle
+    artKey: forest-friends/shell-turtle.png
+    flavorText: Slow to anger. Slower to fall.
+
+  unit_charger:
+    displayName: Raptor Pup
+    artKey: forest-friends/raptor-pup.png
+    flavorText: Loves to chase. Hates to lose.
+
+  action_spark:
+    displayName: Acorn Toss
+    artKey: forest-friends/acorn-toss.png
+    flavorText: It is harder than it looks. Especially when thrown.
+
+  action_mend:
+    displayName: Healing Berries
+    artKey: forest-friends/healing-berries.png
+    flavorText: A handful from the bramble path.
+
+  action_surge:
+    displayName: Battle Cry
+    artKey: forest-friends/battle-cry.png
+    flavorText: A short song. A loud song.
+
+# Optional terminology overrides. Internal rules engine continues
+# to use the neutral terms; only the HUD changes.
+
+terminology:
+  unit: Critter
+  action: Trick
+  resource: Acorns
+  health: Hearts
+  attack: Bite
+  discard: Burrow
+  deck: Forest
+  hand: Paw
+
+# Optional palette overrides. These override the DESIGN profile's
+# default palette tokens.
+
+palette:
+  background: "#F5EFE0"
+  cardFace: "#FFFCF5"
+  cardBorder: "#3D2817"
+  accentFriendly: "#5B8C5A"
+  accentHostile: "#C44536"
+  resource: "#E3B23C"
+  textPrimary: "#3D2817"
+  textMuted: "#7A6E5C"
+
+typography:
+  fontFamilyBody: "Quicksand, system-ui, sans-serif"
+  fontFamilyDisplay: "Fredoka, system-ui, sans-serif"
+
+assets:
+  backgroundArt: forest-friends/forest-clearing.png
+  cardBack: forest-friends/card-back-leaf.png
+  ui:
+    buttonClick: forest-friends/audio/click-twig.ogg
+    cardPlay: forest-friends/audio/leaf-rustle.ogg
+    damage: forest-friends/audio/yelp.ogg
+    heal: forest-friends/audio/wind-chime.ogg
+    victory: forest-friends/audio/birdsong.ogg
+    defeat: forest-friends/audio/sigh.ogg
+
+# Optional locale overrides. Each locale is a partial theme that
+# the resolver layers on top of the defaults above.
+
+locales:
+  es:
+    cards:
+      unit_striker:
+        displayName: Zorrito
+        flavorText: Patas rápidas, dientes más rápidos.
+      unit_guardian:
+        displayName: Tortuga Caparazón
+        flavorText: Lenta para enojarse. Más lenta para caer.
+      unit_charger:
+        displayName: Cría de Raptor
+        flavorText: Le encanta perseguir. Odia perder.
+      action_spark:
+        displayName: Lanzar Bellota
+        flavorText: Es más duro de lo que parece.
+      action_mend:
+        displayName: Bayas Curativas
+        flavorText: Un puñado del sendero de zarzas.
+      action_surge:
+        displayName: Grito de Guerra
+        flavorText: Una canción corta. Una canción fuerte.
+    terminology:
+      unit: Bichito
+      action: Truco
+      resource: Bellotas
+      health: Corazones
+      attack: Mordisco
+      discard: Madriguera
+      deck: Bosque
+      hand: Pata
+
+  ja:
+    cards:
+      unit_striker:
+        displayName: コギツネ
+        flavorText: 素早い足、鋭い歯。
+      unit_guardian:
+        displayName: コウラガメ
+        flavorText: 怒るのは遅い。倒れるのはもっと遅い。
+      unit_charger:
+        displayName: ラプトルの仔
+        flavorText: 追いかけるのが大好き。負けるのは大嫌い。
+      action_spark:
+        displayName: ドングリ投げ
+        flavorText: 見た目より硬い。
+      action_mend:
+        displayName: 癒しの木の実
+        flavorText: 茂みからひと掴み。
+      action_surge:
+        displayName: 雄叫び
+        flavorText: 短く、大きく。
